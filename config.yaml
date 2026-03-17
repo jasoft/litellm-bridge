@@ -3,18 +3,18 @@ model_list:
     litellm_params:
       model: elevenlabs/eleven_multilingual_v2
       api_key: os.environ/ELEVENLABS_API_KEY
+      drop_params: true
+
   - model_name: elevenlabs-transcription
     litellm_params:
       model: elevenlabs/scribe_v2
       api_key: os.environ/ELEVENLABS_API_KEY
-      drop_params: True
-      tag_audio_events: False
-      no_verbatim: True
+      drop_params: true
+      no_verbatim: true
+      tag_audio_events: false
+
+litellm_settings:
+  drop_params: true
 
 general_settings:
   master_key: local-noauth
-
-litellm_settings:
-  callbacks: ["custom_callbacks.cleaner_instance"]
-  # Trying without global drop_params to see if model-level is enough
-  set_verbose: True

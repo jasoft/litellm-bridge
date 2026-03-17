@@ -8,3 +8,4 @@ test_proxy.py
 test_raw.py
 uv.lock
 .python-version
+.DS_Store

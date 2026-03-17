@@ -1,14 +1,16 @@
+FROM ghcr.io/astral-sh/uv:0.8.22 AS uv
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    UV_LINK_MODE=copy \
+    PATH="/root/.local/bin:${PATH}"
 
-RUN pip install --no-cache-dir "litellm[proxy]==1.82.0"
+COPY --from=uv /uv /uvx /bin/
+RUN uv tool install --python /usr/local/bin/python "litellm[proxy]==1.82.3"
 
 WORKDIR /app
 COPY config.yaml /app/config.yaml
-COPY custom_callbacks.py /app/custom_callbacks.py
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
