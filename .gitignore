@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+.ruff_cache/
+.pytest_cache/
+*.wav
+test_proxy.py
+test_raw.py
+uv.lock
+.python-version
