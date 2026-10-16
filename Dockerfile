@@ -7,10 +7,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/root/.local/bin:${PATH}"
 
 COPY --from=uv /uv /uvx /bin/
-RUN uv tool install --python /usr/local/bin/python "litellm[proxy]==1.82.3"
+RUN uv pip install --system "litellm[proxy]==1.82.3"
 
 WORKDIR /app
 COPY config.yaml /app/config.yaml
+COPY main.py /app/main.py
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 

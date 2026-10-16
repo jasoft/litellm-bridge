@@ -47,6 +47,13 @@ README.md
 ELEVENLABS_API_KEY=...
 ```
 
+STT 支持多个 Key：在 `.env` 设置 `ELEVENLABS_API_KEYS=key1,key2,key3`。
+按顺序调用，额度耗尽或上游调用失败后使用下一个 Key；全部失败时返回错误。
+列表会去除空项和重复项，优先于单 Key 配置；不设置列表则继续使用原来的
+`ELEVENLABS_API_KEY`。TTS 仍使用单 Key（未设置时使用列表首项）。
+修改 Key 后重建容器环境（`docker compose up -d --force-recreate`）。
+不同 Key 如果属于同一账户，仍可能共享账户额度。
+
 可选：
 
 ```bash
@@ -71,8 +78,7 @@ set -a
 source .env
 set +a
 
-uv run --with 'litellm[proxy]==1.82.3' \
-  litellm --host 127.0.0.1 --port 8046 --config config.yaml
+HOST=127.0.0.1 uv run python main.py
 ```
 
 如果你就是想走项目入口：
@@ -206,7 +212,7 @@ STT 额外启用了：
 set -a
 source .env
 set +a
-uv run --with 'litellm[proxy]==1.82.3' litellm --host 127.0.0.1 --port 8046 --config config.yaml
+HOST=127.0.0.1 uv run python main.py
 ```
 
 2. 健康检查
