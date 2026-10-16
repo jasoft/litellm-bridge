@@ -42,7 +42,10 @@ def configure_keys(config: dict) -> dict:
 def main() -> None:
     with open(CONFIG_PATH) as source:
         config = configure_keys(yaml.safe_load(source))
-    with NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as runtime:
+    # LiteLLM resolves custom callbacks relative to the configuration file.
+    with NamedTemporaryFile(
+        mode="w", prefix=".runtime-", suffix=".yaml", dir=Path(CONFIG_PATH).parent, delete=False
+    ) as runtime:
         yaml.safe_dump(config, runtime)
 
     os.execvp(

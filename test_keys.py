@@ -5,6 +5,8 @@ import os
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import litellm
@@ -12,8 +14,8 @@ from litellm.exceptions import AuthenticationError
 from litellm.router import Router
 from litellm.types.utils import TranscriptionResponse
 
+import main
 from main import configure_keys
-
 
 CONFIG = {"model_list": [{
     "model_name": "elevenlabs-transcription",
@@ -22,6 +24,18 @@ CONFIG = {"model_list": [{
 
 
 class KeyTests(unittest.TestCase):
+    def test_startup_keeps_config_next_to_callbacks(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "config.yaml"
+            source.write_text(json.dumps(CONFIG))
+            with patch.dict(os.environ, {"ELEVENLABS_API_KEYS": "first,second"}), \
+                    patch.object(main, "CONFIG_PATH", str(source)), \
+                    patch.object(os, "execvp") as launch:
+                main.main()
+                generated = Path(launch.call_args.args[1][-1])
+                self.assertEqual(generated.parent, source.parent)
+                self.assertIn("elevenlabs-transcription-backup-1", generated.read_text())
+
     def test_http_failover_replays_uploaded_audio(self):
         calls = []
         audio = b"RIFF-test-audio-payload"
@@ -72,9 +86,8 @@ class KeyTests(unittest.TestCase):
             self.assertEqual(len(config["model_list"]), 1)
             self.assertEqual(os.environ["ELEVENLABS_STT_KEY_0"], "legacy")
             self.assertNotIn("router_settings", config)
-        with patch.dict(os.environ, {"ELEVENLABS_API_KEYS": " , "}, clear=True):
-            with self.assertRaises(ValueError):
-                configure_keys(CONFIG)
+        with patch.dict(os.environ, {"ELEVENLABS_API_KEYS": " , "}, clear=True), self.assertRaises(ValueError):
+            configure_keys(CONFIG)
 
     def test_list_deduplicates_and_preserves_config(self):
         with patch.dict(os.environ, {"ELEVENLABS_API_KEYS": "first, ,second,first,third"}, clear=True):
