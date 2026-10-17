@@ -3,18 +3,25 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import json
+import logging
 import os
+import re
 import secrets
 import subprocess
 import sys
 import tempfile
+import time
+import uuid
+import wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
 from doubaoime_asr import ASRConfig
 from doubaoime_asr import transcribe as doubao_transcribe
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+
+logger = logging.getLogger("doubao_asr")
 
 
 def run_doubao_stt(audio_file: Path) -> str:
@@ -62,36 +69,91 @@ def _load_cached_engine() -> ASRConfig | None:
 async def lifespan(app: FastAPI):
     global _engine
     _engine = _load_cached_engine()
+    logger.info("doubao_asr_engine_ready resident=%s", _engine is not None)
     yield
 
 
 app = FastAPI(lifespan=lifespan)
 
 
+def _audio_duration_ms(path: Path) -> int | None:
+    try:
+        with wave.open(str(path), "rb") as audio:
+            rate = audio.getframerate()
+            return round(audio.getnframes() * 1000 / rate) if rate else None
+    except (wave.Error, EOFError, OSError):
+        return None
+
+
+def _call_log(level: int, **details: object) -> None:
+    logger.log(level, "doubao_asr_call %s", json.dumps(details, ensure_ascii=False, separators=(",", ":")))
+
+
 @app.post("/v1/audio/transcriptions")
-async def transcribe(file: Annotated[UploadFile, File()], authorization: Annotated[str, Header()] = ""):
+async def transcribe(
+    file: Annotated[UploadFile, File()],
+    request: Request,
+    authorization: Annotated[str, Header()] = "",
+):
     global _engine
+    started = time.perf_counter()
+    supplied_id = request.headers.get("x-ptt-request-id", "")
+    request_id = supplied_id if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", supplied_id) else uuid.uuid4().hex
+    suffix = Path(file.filename or "audio.wav").suffix.lower() or ".wav"
+    engine_mode = "resident" if _engine is not None else "worker-bootstrap"
+    _call_log(logging.INFO, event="start", request_id=request_id, route=request.url.path,
+              requested_model="doubao-transcription", engine_mode=engine_mode,
+              content_type=file.content_type, file_extension=suffix)
+
     token = os.environ.get("LITELLM_MASTER_KEY", "")
     if not token or not secrets.compare_digest(authorization, f"Bearer {token}"):
+        _call_log(logging.WARNING, event="rejected", request_id=request_id, http_status=401,
+                  error_type="AuthenticationError", total_ms=round((time.perf_counter() - started) * 1000, 1))
         raise HTTPException(401, "Invalid API key")
+    upload_started = time.perf_counter()
     content = await file.read()
     if not content:
+        _call_log(logging.WARNING, event="rejected", request_id=request_id, http_status=400,
+                  error_type="EmptyAudio", total_ms=round((time.perf_counter() - started) * 1000, 1))
         raise HTTPException(400, "Audio is empty")
+    upload_ms = round((time.perf_counter() - upload_started) * 1000, 1)
     with tempfile.NamedTemporaryFile(suffix=Path(file.filename or "audio.wav").suffix) as audio:
         audio.write(content)
         audio.flush()
+        audio_duration_ms = _audio_duration_ms(Path(audio.name))
+        asr_started = time.perf_counter()
         try:
             if _engine is None:
                 text = await asyncio.to_thread(run_doubao_stt, Path(audio.name))
                 _engine = _load_cached_engine()
+                engine_mode = "worker-bootstrap"
             else:
                 text = await asyncio.wait_for(
                     doubao_transcribe(Path(audio.name), config=_engine, realtime=False), timeout=15
                 )
         except (TimeoutError, subprocess.SubprocessError, OSError, TypeError, ValueError, RuntimeError) as exc:
-            print(f"Doubao STT failed: {type(exc).__name__}", file=sys.stderr)
+            _call_log(logging.ERROR, event="failed", request_id=request_id,
+                      requested_model="doubao-transcription", engine_mode=engine_mode,
+                      audio_bytes=len(content), audio_duration_ms=audio_duration_ms,
+                      upload_ms=upload_ms,
+                      asr_ms=round((time.perf_counter() - asr_started) * 1000, 1),
+                      total_ms=round((time.perf_counter() - started) * 1000, 1),
+                      error_type=type(exc).__name__, http_status=503)
             raise HTTPException(503, "Doubao transcription unavailable") from exc
     text = text.strip()
     if not text:
+        _call_log(logging.WARNING, event="empty_result", request_id=request_id,
+                  requested_model="doubao-transcription", engine_mode=engine_mode,
+                  audio_bytes=len(content), audio_duration_ms=audio_duration_ms,
+                  upload_ms=upload_ms,
+                  asr_ms=round((time.perf_counter() - asr_started) * 1000, 1),
+                  total_ms=round((time.perf_counter() - started) * 1000, 1), http_status=503)
         raise HTTPException(503, "Doubao returned no speech")
+    _call_log(logging.INFO, event="completed", request_id=request_id,
+              requested_model="doubao-transcription", engine_mode=engine_mode,
+              audio_bytes=len(content), audio_duration_ms=audio_duration_ms,
+              upload_ms=upload_ms,
+              asr_ms=round((time.perf_counter() - asr_started) * 1000, 1),
+              total_ms=round((time.perf_counter() - started) * 1000, 1),
+              response_chars=len(text), http_status=200)
     return {"text": text}
