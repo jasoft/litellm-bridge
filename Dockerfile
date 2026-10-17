@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/root/.local/bin:${PATH}"
 
 COPY --from=uv /uv /uvx /bin/
-RUN uv pip install --system "litellm[proxy]==1.82.3"
+RUN uv pip install --system "litellm[proxy]==1.104.0"
 
 WORKDIR /app
 COPY config.yaml /app/config.yaml

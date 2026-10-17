@@ -5,7 +5,7 @@ description = "OpenAI-compatible bridge for ElevenLabs transcription and speech 
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "litellm[proxy]>=1.82.3",
+    "litellm[proxy]==1.104.0",
     "openai>=2.28.0",
 ]
 

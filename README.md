@@ -45,6 +45,7 @@ README.md
 
 ```bash
 ELEVENLABS_API_KEY=...
+LITELLM_MASTER_KEY=<random-secret>
 ```
 
 STT 支持多个 Key：在 `.env` 设置 `ELEVENLABS_API_KEYS=key1,key2,key3`。
@@ -112,18 +113,19 @@ docker run -d \
 
 ## OpenAI 兼容调用
 
-认证头固定使用：
+认证头使用 `.env` 中的 `LITELLM_MASTER_KEY`：
 
 ```text
-Authorization: Bearer local-noauth
+Authorization: Bearer $LITELLM_MASTER_KEY
 ```
 
-这是因为 [config.yaml](/Users/weiwang/Projects/litellm-bridge/config.yaml#L19) 里把 LiteLLM `master_key` 固定成了 `local-noauth`。
+`config.yaml` 从 `.env` 读取 `LITELLM_MASTER_KEY`；客户端通过 Bearer token 使用此值。
+请使用随机长密钥，LiteLLM 1.104.0 会拒绝空密钥或公开示例密钥。
 
 ### 1. 查看模型
 
 ```bash
-curl -H 'Authorization: Bearer local-noauth' \
+curl -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   http://127.0.0.1:8046/v1/models
 ```
 
@@ -131,7 +133,7 @@ curl -H 'Authorization: Bearer local-noauth' \
 
 ```bash
 curl http://127.0.0.1:8046/v1/audio/transcriptions \
-  -H 'Authorization: Bearer local-noauth' \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -F file='@sample.wav' \
   -F model='elevenlabs-transcription'
 ```
@@ -153,7 +155,7 @@ curl http://127.0.0.1:8046/v1/audio/transcriptions \
 
 ```bash
 curl http://127.0.0.1:8046/v1/audio/speech \
-  -H 'Authorization: Bearer local-noauth' \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "elevenlabs-tts",
@@ -175,7 +177,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://127.0.0.1:8046/v1",
-    api_key="local-noauth",
+    api_key=os.environ["LITELLM_MASTER_KEY"],
 )
 
 with open("sample.wav", "rb") as audio_file:
@@ -215,17 +217,17 @@ set +a
 HOST=127.0.0.1 uv run python main.py
 ```
 
-2. 健康检查
+2. 查看模型
 
 ```bash
-curl -H 'Authorization: Bearer local-noauth' http://127.0.0.1:8046/v1/models
+curl -H "Authorization: Bearer $LITELLM_MASTER_KEY" http://127.0.0.1:8046/v1/models
 ```
 
 3. 转写检查
 
 ```bash
 curl http://127.0.0.1:8046/v1/audio/transcriptions \
-  -H 'Authorization: Bearer local-noauth' \
+    -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -F file='@sample.wav' \
   -F model='elevenlabs-transcription'
 ```
@@ -264,7 +266,7 @@ env | rg ELEVENLABS
 - 音频文件本身无有效语音
 - ElevenLabs key 无效
 - 上游 API Base 配错
-- 请求没带 `Authorization: Bearer local-noauth`
+- 请求没带 `Authorization: Bearer $LITELLM_MASTER_KEY`
 
 ### 3. TTS 报 `paid_plan_required`
 
@@ -281,7 +283,7 @@ docker logs -f litellm-elevenlabs-bridge
 再检查模型：
 
 ```bash
-curl -H 'Authorization: Bearer local-noauth' http://127.0.0.1:8046/v1/models
+curl -H "Authorization: Bearer $LITELLM_MASTER_KEY" http://127.0.0.1:8046/v1/models
 ```
 
 ## 开发

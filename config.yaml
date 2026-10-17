@@ -17,4 +17,4 @@ litellm_settings:
   drop_params: true
 
 general_settings:
-  master_key: local-noauth
+  master_key: os.environ/LITELLM_MASTER_KEY
