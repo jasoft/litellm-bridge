@@ -21,8 +21,6 @@ from doubaoime_asr import ASRConfig
 from doubaoime_asr import transcribe as doubao_transcribe
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 
-logger = logging.getLogger("doubao_asr")
-
 
 def run_doubao_stt(audio_file: Path) -> str:
     env = os.environ.copy()
@@ -69,7 +67,7 @@ def _load_cached_engine() -> ASRConfig | None:
 async def lifespan(app: FastAPI):
     global _engine
     _engine = _load_cached_engine()
-    logger.info("doubao_asr_engine_ready resident=%s", _engine is not None)
+    print(f"doubao_asr_engine_ready resident={_engine is not None}", file=sys.stderr, flush=True)
     yield
 
 
@@ -86,7 +84,9 @@ def _audio_duration_ms(path: Path) -> int | None:
 
 
 def _call_log(level: int, **details: object) -> None:
-    logger.log(level, "doubao_asr_call %s", json.dumps(details, ensure_ascii=False, separators=(",", ":")))
+    print(logging.getLevelName(level) + " doubao_asr_call " +
+          json.dumps(details, ensure_ascii=False, separators=(",", ":")),
+          file=sys.stderr, flush=True)
 
 
 @app.post("/v1/audio/transcriptions")
