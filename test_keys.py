@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import unittest
+from contextlib import redirect_stderr
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -138,12 +139,21 @@ class KeyTests(unittest.TestCase):
                     from custom_callbacks import audio_upload
                     upload = io.BytesIO(audio)
                     upload.name = "test.wav"
-                    data = await audio_upload.async_pre_call_hook(None, None, {"file": upload}, "transcription")
+                    data = await audio_upload.async_pre_call_hook(
+                        None, None,
+                        {"file": upload, "metadata": {"headers": {"x-ptt-request-id": "trace-123"}}},
+                        "transcription",
+                    )
                     response = await router.atranscription(model="doubao-transcription", file=data["file"])
                     self.assertEqual(response.text, "备用识别成功")
-            asyncio.run(run())
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                asyncio.run(run())
             self.assertEqual([provider for provider, _ in calls], ["doubao", "first", "second"])
             self.assertTrue(all(audio in body for _, body in calls))
+            logs = stderr.getvalue()
+            self.assertIn('"request_id":"trace-123"', logs)
+            self.assertNotIn(audio.decode(), logs)
         finally:
             server.shutdown()
             server.server_close()
