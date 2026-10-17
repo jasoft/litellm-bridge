@@ -55,8 +55,9 @@ def test_worker_uses_private_persistent_credentials(monkeypatch, tmp_path, capsy
 
 
 @pytest.mark.parametrize("result", [" 南京 ", "", RuntimeError("failed"), TimeoutError("slow")])
-def test_internal_endpoint_reuses_engine_and_enforces_timeout(monkeypatch, result):
+def test_internal_endpoint_reuses_engine_and_enforces_timeout(monkeypatch, result, caplog):
     from fastapi.testclient import TestClient
+    caplog.set_level("INFO", logger="doubao_asr")
     monkeypatch.setenv("LITELLM_MASTER_KEY", "test-token")
     monkeypatch.setattr(stt, "_load_cached_engine", lambda: object())
     paths = []
@@ -74,10 +75,15 @@ def test_internal_endpoint_reuses_engine_and_enforces_timeout(monkeypatch, resul
         upload = {"file": ("a.wav", b"audio", "audio/wav")}
         assert client.post("/v1/audio/transcriptions", files=upload).status_code == 401
         response = client.post("/v1/audio/transcriptions", files=upload,
-                               headers={"Authorization": "Bearer test-token"})
+                               headers={"Authorization": "Bearer test-token",
+                                        "X-PTT-Request-ID": "trace-123"})
         assert response.status_code == (200 if result == " 南京 " else 503)
         if response.status_code == 200:
             assert response.json() == {"text": "南京"}
+            assert 'request_id":"trace-123"' in caplog.text
+            assert 'event":"completed"' in caplog.text
+            assert '"response_chars":2' in caplog.text
+            assert "南京" not in caplog.text
         assert len(paths) == 1 and not paths[0].exists()
         assert client.post("/v1/audio/transcriptions", files={"file": ("a.wav", b"")},
                            headers={"Authorization": "Bearer test-token"}).status_code == 400
