@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import os
 import secrets
 import subprocess
 import sys
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
+from doubaoime_asr import ASRConfig
+from doubaoime_asr import transcribe as doubao_transcribe
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 
 
@@ -32,11 +36,41 @@ def run_doubao_stt(audio_file: Path) -> str:
     return data["text"].strip()
 
 
-app = FastAPI()
+CREDENTIALS = Path(os.environ.get(
+    "DOUBAO_CREDENTIAL_PATH", str(Path(__file__).resolve().parent / "data" / "doubao-asr-credentials.json")
+)).expanduser()
+_engine: ASRConfig | None = None
+
+
+def _load_cached_engine() -> ASRConfig | None:
+    try:
+        cached = json.loads(CREDENTIALS.read_text())
+        if not isinstance(cached, dict) or not cached.get("device_id") or not cached.get("token"):
+            return None
+        engine = ASRConfig(credential_path=CREDENTIALS, connect_timeout=5, recv_timeout=5)
+        with CREDENTIALS.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            engine.ensure_credentials()
+            CREDENTIALS.chmod(0o600)
+        return engine
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        print(f"Doubao cached credentials unavailable: {type(exc).__name__}", file=sys.stderr)
+        return None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _engine
+    _engine = _load_cached_engine()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.post("/v1/audio/transcriptions")
 async def transcribe(file: Annotated[UploadFile, File()], authorization: Annotated[str, Header()] = ""):
+    global _engine
     token = os.environ.get("LITELLM_MASTER_KEY", "")
     if not token or not secrets.compare_digest(authorization, f"Bearer {token}"):
         raise HTTPException(401, "Invalid API key")
@@ -47,10 +81,17 @@ async def transcribe(file: Annotated[UploadFile, File()], authorization: Annotat
         audio.write(content)
         audio.flush()
         try:
-            text = await asyncio.to_thread(run_doubao_stt, Path(audio.name))
-        except (subprocess.SubprocessError, OSError, TypeError, ValueError, RuntimeError) as exc:
+            if _engine is None:
+                text = await asyncio.to_thread(run_doubao_stt, Path(audio.name))
+                _engine = _load_cached_engine()
+            else:
+                text = await asyncio.wait_for(
+                    doubao_transcribe(Path(audio.name), config=_engine, realtime=False), timeout=15
+                )
+        except (TimeoutError, subprocess.SubprocessError, OSError, TypeError, ValueError, RuntimeError) as exc:
             print(f"Doubao STT failed: {type(exc).__name__}", file=sys.stderr)
             raise HTTPException(503, "Doubao transcription unavailable") from exc
+    text = text.strip()
     if not text:
         raise HTTPException(503, "Doubao returned no speech")
     return {"text": text}

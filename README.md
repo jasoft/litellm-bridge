@@ -56,7 +56,7 @@ docker compose up -d --build
 
 容器入口启动豆包内部适配服务（仅监听 `127.0.0.1:8047`），然后启动 LiteLLM。
 外部请求统一经过 LiteLLM 的认证、模型路由和 fallback；内部接口也要求相同密钥。
-豆包在独立子进程执行，15 秒上限覆盖上游无超时的设备注册；错误不会泄露凭据。
+豆包库在内部 ASR 服务启动时加载并常驻内存（实测约 66 MB RSS、51 MB PSS），识别调用共享已加载的库和缓存凭据；识别单次上限 15 秒。凭据缓存缺失或无效时保留有界子进程恢复路径。错误不会泄露凭据。
 现有 ElevenLabs TTS 参数保持原样，能否使用仍取决于账户额度和音色权限。
 
 ## 本地运行与验证
@@ -70,4 +70,4 @@ uv run pytest test_keys.py test_doubao.py -q
 uv run ruff check main.py doubao_api.py doubao_stt.py test_doubao.py
 ```
 
-测试覆盖多 Key、豆包失败后的原音频重传、内部鉴权、子进程超时和凭据持久化。
+测试覆盖多 Key、豆包失败后的原音频重传、内部鉴权、超时、常驻识别和凭据恢复。
