@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 from copy import deepcopy
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -36,6 +38,12 @@ def configure_keys(config: dict) -> dict:
         router.setdefault("fallbacks", []).append({"elevenlabs-transcription": backups})
         router["num_retries"] = 0
         router["max_fallbacks"] = len(backups)
+    if any(m["model_name"] == "doubao-transcription" for m in config["model_list"]):
+        router = config.setdefault("router_settings", {})
+        for fallback in router.setdefault("fallbacks", []):
+            if "doubao-transcription" in fallback:
+                fallback["doubao-transcription"] = ["elevenlabs-transcription", *backups]
+        router["max_fallbacks"] = len(backups) + 1
     return config
 
 
@@ -47,6 +55,13 @@ def main() -> None:
         mode="w", prefix=".runtime-", suffix=".yaml", dir=Path(CONFIG_PATH).parent, delete=False
     ) as runtime:
         yaml.safe_dump(config, runtime)
+
+    if any(m["model_name"] == "doubao-transcription" for m in config["model_list"]):
+        # The provider stays on loopback; clients use LiteLLM auth and routing on 8046.
+        subprocess.Popen([
+            sys.executable, "-m", "uvicorn", "doubao_api:app",
+            "--host", "127.0.0.1", "--port", "8047",
+        ], cwd=Path(__file__).parent)
 
     os.execvp(
         "litellm",

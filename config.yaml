@@ -1,4 +1,14 @@
 model_list:
+  - model_name: doubao-transcription
+    litellm_params:
+      model: openai/doubao
+      api_base: http://127.0.0.1:8047/v1
+      api_key: os.environ/LITELLM_MASTER_KEY
+      max_retries: 0
+      timeout: 20
+    model_info:
+      mode: audio_transcription
+
   - model_name: elevenlabs-tts
     litellm_params:
       model: elevenlabs/eleven_multilingual_v2
@@ -14,7 +24,13 @@ model_list:
       tag_audio_events: false
 
 litellm_settings:
+  callbacks: [custom_callbacks.audio_upload]
   drop_params: true
+
+router_settings:
+  num_retries: 0
+  fallbacks:
+    - doubao-transcription: [elevenlabs-transcription]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

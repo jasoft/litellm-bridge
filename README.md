@@ -1,302 +1,73 @@
-# LiteLLM ElevenLabs Bridge
+# LiteLLM 语音网关
 
-一个把 ElevenLabs 语音接口暴露成 OpenAI 兼容 API 的轻量桥接服务。
+通过同一套 OpenAI 兼容接口提供豆包 ASR、ElevenLabs STT 和 TTS。
+远程容器为 `litellm-elevenlabs-bridge`，端口 `8046`。
 
-当前支持：
-- `POST /v1/audio/transcriptions`
-- `POST /v1/audio/speech`
-- `GET /v1/models`
+| 模型名 | 行为 |
+| --- | --- |
+| `doubao-transcription` | 豆包识别；失败、超时或空结果时按顺序尝试 ElevenLabs 的所有 Key |
+| `elevenlabs-transcription` | 原 ElevenLabs Scribe v2，保留为独立备用入口；仍支持多 Key 切换 |
+| `elevenlabs-tts` | 原 ElevenLabs TTS |
 
-桥接基于 LiteLLM 内置的 ElevenLabs provider：
-- OpenAI 风格的 `/v1/audio/transcriptions`
-- 上游实际调用 ElevenLabs 官方 `/v1/speech-to-text`
+接口包括 `POST /v1/audio/transcriptions`、`POST /v1/audio/speech` 和 `GET /v1/models`。
+原模型名与认证保持兼容；其他 App 选择 `doubao-transcription` 即可使用新的识别服务。
 
-默认暴露两个模型名：
-- `elevenlabs-transcription`
-- `elevenlabs-tts`
+## 调用
 
-## 适用场景
-
-- 你已经有一套 OpenAI SDK / OpenAI API 兼容调用链
-- 你想把 STT/TTS 上游切到 ElevenLabs
-- 你希望本地、Docker、远端服务器都用同一套配置
-- 你希望 agent 可以直接读 README 就知道怎么启动、验证和排障
-
-## 项目结构
-
-运行时真正需要的文件很少：
-
-```text
-config.yaml
-docker-entrypoint.sh
-Dockerfile
-main.py
-README.md
-```
-
-说明：
-- [config.yaml](/Users/weiwang/Projects/litellm-bridge/config.yaml) 定义模型映射和认证配置
-- [docker-entrypoint.sh](/Users/weiwang/Projects/litellm-bridge/docker-entrypoint.sh) 是容器入口
-- [main.py](/Users/weiwang/Projects/litellm-bridge/main.py) 提供本地 `python main.py` 启动方式
-
-## 环境变量
-
-必填：
-
-```bash
-ELEVENLABS_API_KEY=...
-LITELLM_MASTER_KEY=<random-secret>
-```
-
-STT 支持多个 Key：在 `.env` 设置 `ELEVENLABS_API_KEYS=key1,key2,key3`。
-按顺序调用，额度耗尽或上游调用失败后使用下一个 Key；全部失败时返回错误。
-列表会去除空项和重复项，优先于单 Key 配置；不设置列表则继续使用原来的
-`ELEVENLABS_API_KEY`。TTS 仍使用单 Key（未设置时使用列表首项）。
-修改 Key 后重建容器环境（`docker compose up -d --force-recreate`）。
-不同 Key 如果属于同一账户，仍可能共享账户额度。
-
-可选：
-
-```bash
-ELEVENLABS_API_BASE=https://api.elevenlabs.io
-HOST=0.0.0.0
-PORT=8046
-LITELLM_CONFIG_PATH=/app/config.yaml
-```
-
-示例 `.env`：
-
-```bash
-cp .env.example .env
-```
-
-## 本地运行
-
-推荐直接用 `uv`：
-
-```bash
-set -a
-source .env
-set +a
-
-HOST=127.0.0.1 uv run python main.py
-```
-
-如果你就是想走项目入口：
-
-```bash
-set -a
-source .env
-set +a
-
-uv run python main.py
-```
-
-## Docker 运行
-
-构建：
-
-```bash
-docker build -t litellm-elevenlabs-bridge:latest .
-```
-
-运行：
-
-```bash
-docker run -d \
-  --name litellm-elevenlabs-bridge \
-  --restart unless-stopped \
-  -p 8046:8046 \
-  --env-file .env \
-  litellm-elevenlabs-bridge:latest
-```
-
-## OpenAI 兼容调用
-
-认证头使用 `.env` 中的 `LITELLM_MASTER_KEY`：
-
-```text
-Authorization: Bearer $LITELLM_MASTER_KEY
-```
-
-`config.yaml` 从 `.env` 读取 `LITELLM_MASTER_KEY`；客户端通过 Bearer token 使用此值。
-请使用随机长密钥，LiteLLM 1.104.0 会拒绝空密钥或公开示例密钥。
-
-### 1. 查看模型
-
-```bash
-curl -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  http://127.0.0.1:8046/v1/models
-```
-
-### 2. 语音转写
-
-```bash
-curl http://127.0.0.1:8046/v1/audio/transcriptions \
-  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -F file='@sample.wav' \
-  -F model='elevenlabs-transcription'
-```
-
-返回示例：
-
-```json
-{
-  "text": "Hello from Little Bridge.",
-  "task": "transcribe",
-  "language": "eng",
-  "words": [
-    { "word": "Hello", "start": 0.119, "end": 0.459 }
-  ]
-}
-```
-
-### 3. 文字转语音
-
-```bash
-curl http://127.0.0.1:8046/v1/audio/speech \
-  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "elevenlabs-tts",
-    "input": "Hello from LiteLLM bridge.",
-    "voice": "alloy",
-    "response_format": "mp3"
-  }' \
-  --output speech.mp3
-```
-
-注意：
-- TTS 是否成功还取决于 ElevenLabs 账户权限和 voice 可用性
-- 某些免费账户会在默认 library voice 上收到 `paid_plan_required`
-
-## OpenAI Python SDK 示例
+Base URL：`http://docker.home:8046/v1`。认证使用现有 `LITELLM_MASTER_KEY`，不要把真实密钥提交到代码。
 
 ```python
+import os
 from openai import OpenAI
 
-client = OpenAI(
-    base_url="http://127.0.0.1:8046/v1",
-    api_key=os.environ["LITELLM_MASTER_KEY"],
-)
-
-with open("sample.wav", "rb") as audio_file:
-    result = client.audio.transcriptions.create(
-        model="elevenlabs-transcription",
-        file=audio_file,
-    )
-
+client = OpenAI(base_url="http://docker.home:8046/v1", api_key=os.environ["LITELLM_MASTER_KEY"])
+with open("sample.wav", "rb") as audio:
+    result = client.audio.transcriptions.create(model="doubao-transcription", file=audio)
 print(result.text)
 ```
 
-## 当前模型映射
-
-见 [config.yaml](/Users/weiwang/Projects/litellm-bridge/config.yaml#L1)：
-
-- `elevenlabs-transcription` -> `elevenlabs/scribe_v2`
-- `elevenlabs-tts` -> `elevenlabs/eleven_multilingual_v2`
-
-STT 额外启用了：
-- `no_verbatim: true`
-- `tag_audio_events: false`
-
-这意味着：
-- 尽量去掉 filler words
-- 尽量不输出 `(laughter)`、`(clap)` 之类的事件标签
-
-## Agent Notes
-
-给 agent 的最小操作集：
-
-1. 启动服务
-
 ```bash
-set -a
-source .env
-set +a
-HOST=127.0.0.1 uv run python main.py
+curl http://docker.home:8046/v1/audio/transcriptions \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -F file=@sample.wav -F model=doubao-transcription
 ```
 
-2. 查看模型
+需要直接使用原 STT 时将模型名改为 `elevenlabs-transcription`。
+豆包当前返回 `{"text": "识别结果"}`，不提供逐字时间戳或字幕格式。
+
+## 部署
+
+`.env` 必填 `LITELLM_MASTER_KEY` 和 `ELEVENLABS_API_KEY`（或逗号分隔的 `ELEVENLABS_API_KEYS`）。
+ElevenLabs Key 列表去重后按顺序尝试，TTS 使用单 Key，未设置时使用列表首项。
+可选 `ELEVENLABS_API_BASE`、`HOST`、`PORT`、`LITELLM_CONFIG_PATH`。
 
 ```bash
-curl -H "Authorization: Bearer $LITELLM_MASTER_KEY" http://127.0.0.1:8046/v1/models
+cp .env.example .env
+# 填入密钥后执行
+mkdir -p data
+docker compose up -d --build
 ```
 
-3. 转写检查
+豆包使用 [doubao-asr-free](https://github.com/RayMorTwinkle/doubao-asr-free)，固定到
+`7a99097e8e4ed4a58c57f975346689d724fde6a3`。Docker 包含 `libopus0`。
+凭据默认保存在挂载的 `data/doubao-asr-credentials.json`，权限 `0600`，首次自动注册；
+也可以安全复制已有凭据。可用 `DOUBAO_CREDENTIAL_PATH` 指定路径。
+不要把 `data/` 加入镜像或提交到 Git。
 
-```bash
-curl http://127.0.0.1:8046/v1/audio/transcriptions \
-    -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -F file='@sample.wav' \
-  -F model='elevenlabs-transcription'
-```
+容器入口启动豆包内部适配服务（仅监听 `127.0.0.1:8047`），然后启动 LiteLLM。
+外部请求统一经过 LiteLLM 的认证、模型路由和 fallback；内部接口也要求相同密钥。
+豆包在独立子进程执行，15 秒上限覆盖上游无超时的设备注册；错误不会泄露凭据。
+现有 ElevenLabs TTS 参数保持原样，能否使用仍取决于账户额度和音色权限。
 
-4. Docker 部署
+## 本地运行与验证
 
-```bash
-docker build -t litellm-elevenlabs-bridge:latest .
-docker rm -f litellm-elevenlabs-bridge || true
-docker run -d \
-  --name litellm-elevenlabs-bridge \
-  --restart unless-stopped \
-  -p 8046:8046 \
-  --env-file .env \
-  litellm-elevenlabs-bridge:latest
-```
-
-## 常见问题
-
-### 1. `ELEVENLABS_API_KEY is required`
-
-说明环境变量没有注入。
-
-检查：
-
-```bash
-set -a
-source .env
-set +a
-env | rg ELEVENLABS
-```
-
-### 2. `/v1/models` 可用，但转写失败
-
-通常是以下几类问题：
-- 音频文件本身无有效语音
-- ElevenLabs key 无效
-- 上游 API Base 配错
-- 请求没带 `Authorization: Bearer $LITELLM_MASTER_KEY`
-
-### 3. TTS 报 `paid_plan_required`
-
-这不是桥接层问题，是 ElevenLabs 账户权限或 voice 权限问题。
-
-### 4. Docker 启动后请求被 reset
-
-先看日志：
-
-```bash
-docker logs -f litellm-elevenlabs-bridge
-```
-
-再检查模型：
-
-```bash
-curl -H "Authorization: Bearer $LITELLM_MASTER_KEY" http://127.0.0.1:8046/v1/models
-```
-
-## 开发
-
-安装开发依赖：
+macOS 需先安装 `brew install opus`。加载 `.env` 后：
 
 ```bash
 uv sync --group dev
+HOST=127.0.0.1 uv run python main.py
+uv run pytest test_keys.py test_doubao.py -q
+uv run ruff check main.py doubao_api.py doubao_stt.py test_doubao.py
 ```
 
-静态检查：
-
-```bash
-uv run ruff check .
-uv run pyright
-```
+测试覆盖多 Key、豆包失败后的原音频重传、内部鉴权、子进程超时和凭据持久化。

@@ -1,0 +1,12 @@
+services:
+  litellm-bridge:
+    container_name: litellm-elevenlabs-bridge
+    build: .
+    image: litellm-elevenlabs-bridge:latest
+    ports:
+      - "8046:8046"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

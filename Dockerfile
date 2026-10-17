@@ -7,11 +7,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/root/.local/bin:${PATH}"
 
 COPY --from=uv /uv /uvx /bin/
-RUN uv pip install --system "litellm[proxy]==1.104.0"
+RUN apt-get update && apt-get install -y --no-install-recommends git libopus0 && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml /tmp/deps/pyproject.toml
+RUN cd /tmp/deps && uv export --no-dev --no-emit-project --no-hashes -o requirements.txt && uv pip install --system -r requirements.txt
 
 WORKDIR /app
 COPY config.yaml /app/config.yaml
-COPY main.py /app/main.py
+COPY main.py doubao_api.py doubao_stt.py custom_callbacks.py /app/
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
