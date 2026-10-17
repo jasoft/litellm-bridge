@@ -98,10 +98,13 @@ async def transcribe(
     global _engine
     started = time.perf_counter()
     supplied_id = request.headers.get("x-ptt-request-id", "")
-    request_id = supplied_id if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", supplied_id) else uuid.uuid4().hex
+    proxy_call_id = request.headers.get("x-litellm-call-id", "")
+    request_id = next((value for value in (supplied_id, proxy_call_id)
+                       if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value)), uuid.uuid4().hex)
     suffix = Path(file.filename or "audio.wav").suffix.lower() or ".wav"
     engine_mode = "resident" if _engine is not None else "worker-bootstrap"
     _call_log(logging.INFO, event="start", request_id=request_id, route=request.url.path,
+              litellm_call_id=proxy_call_id or None,
               requested_model="doubao-transcription", engine_mode=engine_mode,
               content_type=file.content_type, file_extension=suffix)
 
