@@ -5,7 +5,7 @@
 
 | 模型名 | 行为 |
 | --- | --- |
-| `doubao-transcription` | 豆包识别；失败、超时或空结果时按顺序尝试 ElevenLabs 的所有 Key |
+| `doubao-transcription` | ≤20 秒使用豆包；长音频、时长未知、失败、超时或空结果时按顺序尝试 ElevenLabs 的所有 Key |
 | `elevenlabs-transcription` | 原 ElevenLabs Scribe v2，保留为独立备用入口；仍支持多 Key 切换 |
 | `elevenlabs-tts` | 原 ElevenLabs TTS |
 
@@ -34,6 +34,10 @@ curl http://docker.home:8046/v1/audio/transcriptions \
 
 需要直接使用原 STT 时将模型名改为 `elevenlabs-transcription`。
 豆包当前返回 `{"text": "识别结果"}`，不提供逐字时间戳或字幕格式。
+
+豆包输入法接口在长录音中会滚动丢弃前段结果，依赖库只返回末段，且仍报告成功。
+内部适配服务因此只接收可确定时长且不超过 20 秒的音频；其他音频返回 503，
+由现有 LiteLLM fallback 将**完整原始文件**转交 ElevenLabs，避免静默丢失前文。
 
 ## 部署
 

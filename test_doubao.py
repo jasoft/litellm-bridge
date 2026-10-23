@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -59,6 +61,7 @@ def test_internal_endpoint_reuses_engine_and_enforces_timeout(monkeypatch, resul
     from fastapi.testclient import TestClient
     monkeypatch.setenv("LITELLM_MASTER_KEY", "test-token")
     monkeypatch.setattr(stt, "_load_cached_engine", lambda: object())
+    monkeypatch.setattr(stt, "_audio_duration_ms", lambda path: 1000)
     paths = []
 
     async def transcribe(path, *, config, realtime):
@@ -96,6 +99,7 @@ def test_missing_credentials_uses_bounded_worker_then_caches_engine(monkeypatch,
     calls = []
     engines = iter((None, object()))
     monkeypatch.setattr(stt, "_load_cached_engine", lambda: next(engines))
+    monkeypatch.setattr(stt, "_audio_duration_ms", lambda path: 1000)
 
     def worker(path):
         calls.append(path)
@@ -128,3 +132,50 @@ def test_cached_engine_load_is_local_and_preserves_private_mode(monkeypatch, tmp
     engine = stt._load_cached_engine()
     assert engine.initialized
     assert credentials.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("duration_ms", [19_999, 20_000, 20_001, 31_104, 66_820])
+def test_long_audio_delegates_before_recognition(monkeypatch, duration_ms, capsys):
+    from fastapi.testclient import TestClient
+    audio = io.BytesIO()
+    with wave.open(audio, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16_000)
+        wav.writeframes(b"\0\0" * (duration_ms * 16))
+    content = audio.getvalue()
+    monkeypatch.setenv("LITELLM_MASTER_KEY", "test-token")
+    monkeypatch.setattr(stt, "_load_cached_engine", lambda: object())
+    calls = []
+
+    async def transcribe(path, **kwargs):
+        calls.append(path)
+        assert path.read_bytes() == content
+        return "完整短录音"
+
+    monkeypatch.setattr(stt, "doubao_transcribe", transcribe)
+    with TestClient(stt.app) as client:
+        response = client.post("/v1/audio/transcriptions",
+                               files={"file": ("long.wav", content, "audio/wav")},
+                               headers={"Authorization": "Bearer test-token"})
+    delegated = duration_ms > 20_000
+    assert response.status_code == (503 if delegated else 200)
+    assert len(calls) == (0 if delegated else 1)
+    assert all(not path.exists() for path in calls)
+    if delegated:
+        logs = capsys.readouterr().err
+        assert '"event":"delegated"' in logs
+        assert '"reason":"audio_too_long"' in logs
+        assert f'"audio_duration_ms":{duration_ms}' in logs
+
+
+def test_unknown_duration_delegates_instead_of_risking_partial_text(monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setenv("LITELLM_MASTER_KEY", "test-token")
+    monkeypatch.setattr(stt, "_load_cached_engine", lambda: object())
+    monkeypatch.setattr(stt, "doubao_transcribe", lambda *args, **kwargs: pytest.fail("Unknown duration"))
+    with TestClient(stt.app) as client:
+        response = client.post("/v1/audio/transcriptions",
+                               files={"file": ("unknown.bin", b"unknown-format")},
+                               headers={"Authorization": "Bearer test-token"})
+    assert response.status_code == 503

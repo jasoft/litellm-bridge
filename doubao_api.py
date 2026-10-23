@@ -12,11 +12,11 @@ import sys
 import tempfile
 import time
 import uuid
-import wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
+import miniaudio
 from doubaoime_asr import ASRConfig
 from doubaoime_asr import transcribe as doubao_transcribe
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
@@ -76,10 +76,8 @@ app = FastAPI(lifespan=lifespan)
 
 def _audio_duration_ms(path: Path) -> int | None:
     try:
-        with wave.open(str(path), "rb") as audio:
-            rate = audio.getframerate()
-            return round(audio.getnframes() * 1000 / rate) if rate else None
-    except (wave.Error, EOFError, OSError):
+        return round(miniaudio.get_file_info(str(path)).duration * 1000)
+    except (miniaudio.DecodeError, OSError):
         return None
 
 
@@ -124,6 +122,14 @@ async def transcribe(
         audio.write(content)
         audio.flush()
         audio_duration_ms = _audio_duration_ms(Path(audio.name))
+        # Doubao drops earlier rolling windows around 23s; let LiteLLM replay the whole upload to Scribe.
+        if audio_duration_ms is None or audio_duration_ms > 20_000:
+            _call_log(logging.INFO, event="delegated", request_id=request_id,
+                      requested_model="doubao-transcription", audio_bytes=len(content),
+                      audio_duration_ms=audio_duration_ms,
+                      reason="duration_unknown" if audio_duration_ms is None else "audio_too_long",
+                      http_status=503, total_ms=round((time.perf_counter() - started) * 1000, 1))
+            raise HTTPException(503, "Audio requires full-length transcription fallback")
         asr_started = time.perf_counter()
         try:
             if _engine is None:
